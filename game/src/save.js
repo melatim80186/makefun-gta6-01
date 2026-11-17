@@ -1,16 +1,15 @@
-// SOLMAR save game — localStorage, versioned, never throws.
-// Save key: solmar.save.v1. Best-cash record key: solmar.best.v1.
-// Every storage access is guarded: if the browser denies storage
-// (private mode, disabled cookies) the game just plays unsaved.
+// Save / best-cash persistence for SOLMAR, on localStorage.
+// Every storage access is guarded: in a browser that denies storage
+// (private mode, blocked cookies) nothing here may ever throw.
 
 const SAVE_KEY = 'solmar.save.v1';
 const BEST_KEY = 'solmar.best.v1';
-const VERSION = 1;
+const SAVE_VERSION = 1;
 
 function safeGet(key) {
   try {
     return window.localStorage.getItem(key);
-  } catch (e) {
+  } catch (err) {
     return null;
   }
 }
@@ -18,45 +17,46 @@ function safeGet(key) {
 function safeSet(key, value) {
   try {
     window.localStorage.setItem(key, value);
-  } catch (e) {
-    // Storage denied — ignore, the game keeps running.
+  } catch (err) {
+    // Storage denied or full: the game keeps running without a save.
   }
 }
 
 function safeRemove(key) {
   try {
     window.localStorage.removeItem(key);
-  } catch (e) {
-    // Storage denied — nothing to clear.
+  } catch (err) {
+    // Nothing to do if storage is unavailable.
   }
 }
 
-// Persist the current game. `state` is the world state object.
-export function saveGame(state) {
-  const data = {
-    version: VERSION,
-    cash: state.player.cash,
-    missionIndex: state.missionIndex,
-    goldFound: state.goldFound,
-    playerX: state.player.x,
-    playerY: state.player.y,
-    carsStolen: state.stats.carsStolen,
-    missionsDone: state.stats.missionsDone,
-    storyDone: state.storyDone,
+// Store a snapshot of the run: cash, how far the story has got, which
+// gold bars were already found, where the player stands, and the stats.
+export function saveGame(data) {
+  const record = {
+    version: SAVE_VERSION,
+    cash: data.cash || 0,
+    missionIndex: data.missionIndex || 0,
+    goldFound: Array.isArray(data.goldFound) ? data.goldFound.slice() : [],
+    playerX: data.playerX || 0,
+    playerY: data.playerY || 0,
+    carsStolen: data.carsStolen || 0,
+    missionsDone: data.missionsDone || 0,
+    storyDone: !!data.storyDone,
   };
-  safeSet(SAVE_KEY, JSON.stringify(data));
+  safeSet(SAVE_KEY, JSON.stringify(record));
 }
 
-// Restore a saved game, or null when there is no save or the
-// stored version does not match (old saves are ignored, not crashed on).
+// Returns the saved record, or null when there is no save, the JSON is
+// broken, or it was written by a different save version.
 export function loadGame() {
   const raw = safeGet(SAVE_KEY);
   if (!raw) return null;
   try {
-    const data = JSON.parse(raw);
-    if (!data || data.version !== VERSION) return null;
-    return data;
-  } catch (e) {
+    const record = JSON.parse(raw);
+    if (!record || record.version !== SAVE_VERSION) return null;
+    return record;
+  } catch (err) {
     return null;
   }
 }
@@ -69,14 +69,14 @@ export function clearSave() {
   safeRemove(SAVE_KEY);
 }
 
-// Best cash record: the most money the player has ever held.
+// Best cash ever held, kept separately so quitting never loses the record.
 export function readBest() {
   const raw = safeGet(BEST_KEY);
-  if (!raw) return 0;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 0;
+  const value = raw === null ? 0 : Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 export function saveBest(cash) {
-  if (cash > readBest()) safeSet(BEST_KEY, String(cash));
+  const amount = Number(cash) || 0;
+  if (amount > readBest()) safeSet(BEST_KEY, String(amount));
 }
