@@ -1,82 +1,83 @@
 # SOLMAR — Streets of Gold
 
-[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![rank](https://make.fun/badge/gta6-01/melatim80186/makefun-gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![reward](https://make.fun/badge/gta6-01/melatim80186/makefun-gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+A top-down 2D open-world crime game built for the make.fun gta6-01
+contest ("Make GTA 6"). You play Mars Delgado, a driver fresh out of
+luck in the sun-soaked coastal city of Solmar, who owes Vera Solano
+$5,000 — and the only way out is eight jobs across the city, one stolen
+car at a time.
 
-A top-down 2D open-world crime game built for the
-[Make GTA 6 bounty](https://make.fun/bounty/gta6-01) on make.fun
-(`gta6-01` — $1,666 prize pool, deadline 2026-11-24).
-
-Welcome to Solmar, a sun-baked coastal city where gold is the only
-law that matters. You start as a nobody with empty pockets and a
-stolen car. By the end of the story, the whole city knows your name —
-and the police know your face.
-
-## The city
-
-Solmar is a living open world you can drive across freely: downtown
-streets, the marina, the industrial docks, quiet suburbs, and the
-long coastal highway. Traffic flows, pedestrians scatter, and the
-city reacts to what you do. Every corner is a choice — cruise
-legally, or take what you want and deal with the consequences.
-
-## What you can do
-
-- **Steal cars** — walk up to any parked or slow-moving car and take
-  it. Faster cars mean faster getaways, and better cars are worth
-  more when you need to disappear.
-- **Run from the law** — every crime raises your wanted level. At
-  low heat, a patrol car tails you. At high heat, the whole
-  department is on you. Lose them with speed, sharp turns, and
-  distance — or pay a visit to a spray shop and come out with a
-  clean car and a clean slate.
-- **Chase gold** — gold bars are the real currency of Solmar. Earn
-  them, find them, and hold on to them. Gold buys your way up.
-- **Work the streets** — take courier jobs to earn cash and
-  reputation without (much) breaking the law. Deliveries pay,
-  on time pays better, and a clean run keeps the heat off.
-- **Play the story** — 8 story missions take you from small-time
-  car thief to the center of Solmar's gold trade. Each mission
-  introduces a new corner of the city and a new way to make —
-  or lose — everything.
-
-## Staying alive
-
-- **Wanted system** — your wanted level climbs with every crime
-  and cools down when you stay out of trouble. The higher it goes,
-  the more aggressive the police response.
-- **Spray shops** — repaint and re-plate your ride to shake a
-  pursuit. A fresh paint job is the cheapest alibi in Solmar.
-- **HUD + minimap** — speed, cash, gold, wanted level, and mission
-  objectives are always on screen, with a live minimap showing
-  the city, your targets, and the nearest flashing lights.
-- **Synth soundtrack** — an original synthwave score drives the
-  city: cruising music by day, tense pursuit music when the
-  sirens start.
+[![make.fun](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
+[![Rank](https://make.fun/badge/gta6-01/melatim80186/makefun-gta6-01/rank.svg)](https://make.fun/bounty/gta6-01)
+[![Reward](https://make.fun/badge/gta6-01/melatim80186/makefun-gta6-01/reward.svg)](https://make.fun/bounty/gta6-01)
 
 ## How to play
 
-Open the game in your browser and drive. Move with the arrow keys
-or WASD, steal cars on foot, and follow the mission markers on the
-minimap. The first mission starts the story — the rest of the city
-is yours to explore between jobs.
+Serve the `game/` folder with any static file server, then open
+`index.html` in desktop Chrome. For example:
 
-Tips for new arrivals:
+```
+npx serve game
+# or: python3 -m http.server --directory game
+```
 
-- A fast car beats a brave plan. Steal something quick before a
-  big job.
-- Courier runs are the safest way to build up cash early.
-- The spray shop is your best friend at three stars and above.
-- Gold is heavy in more ways than one. Don't flash it around.
+No build step, no network requests, no libraries — plain ES modules and
+Canvas 2D. Pick **New Game** on the title screen (or **Continue** if a
+save exists). The first job starts a few seconds after you begin.
 
-## Built for make.fun
+## Controls
 
-SOLMAR was built as an entry for the **Make GTA 6** bounty
-([gta6-01](https://make.fun/bounty/gta6-01)) — an original 2D
-open-world crime game: a full story campaign, free-roam driving,
-a wanted/police system, gold-bar progression, courier work,
-spray shops, HUD, minimap, and synth sound, all in the browser.
+- **WASD / arrow keys** — move on foot, drive when in a car
+- **Shift** — run on foot
+- **E** — enter / exit a car
+- **F** — punch
+- **Mouse click** — shoot the pistol (mouse aims)
+- **Space** — handbrake while driving
+- **H** — horn
+- **P / Esc** — pause
+- **M** — mute the music and sound effects
 
-No installs, no accounts — just you, a stolen car, and a city
-full of gold.
+## The 8 story jobs
+
+All eight jobs come from Vera Solano, and they chain automatically —
+the next one starts a few seconds after the last pays out. A failed job
+retries after a short wait.
+
+1. **First Wheels** — steal any car and drive it to Vera's Garage. ($200)
+2. **The Drop** — deliver the package to the Marina within 90 seconds. ($350)
+3. **Hot Wheels** — steal the yellow Comet Downtown and bring it back. ($500)
+4. **Payback** — defeat 3 Breakers on their turf, then report back. ($600)
+5. **Silent Alarm** — hold the warehouse door for 5 seconds, then get back
+   within 120 seconds. ($800)
+6. **Getaway Driver** — hit 3 checkpoints within 150 seconds. ($1,000)
+7. **The Big Score** — crack the bank vault (hold 6 seconds), then reach
+   Lay Low Motors within 150 seconds. ($1,500)
+8. **Paid in Full** — bring $5,000 to Vera's Garage and clear the debt. ($0)
+
+Finish all eight and the story ends with "PAID IN FULL" — after that,
+Solmar is yours to roam freely.
+
+## Side activities
+
+- **Courier jobs** — repeatable deliveries worth $150 each. Touch the blue
+  marker, then reach the next one within 75 seconds.
+- **Gold bars** — 12 hidden bars scattered at block corners, $250 apiece.
+- **Lay Low Motors** — two spray shops. Drive in while wanted and pay $100
+  to clear all your stars.
+- **Combat and pickups** — fists and a pistol (ammo pickups grant 24 rounds),
+  health pickups, and $40 cash dropped by defeated enemies.
+
+## Wanted level
+
+Stealing a car, hitting a pedestrian, or ramming a police car raises your
+wanted level (0–5 stars). Police cars chase you through the streets and
+foot officers sprint you down — stand next to one for a moment and you get
+BUSTED. Lay low out of sight and the heat cools off, one star at a time.
+Getting busted or wasted costs a fine and sends you back to the garage or
+the hospital, and the active job fails.
+
+## Sound and save
+
+All sound is synthesized live with WebAudio — engine hum, a two-tone
+police siren, gunshots, and a 16-step bass-and-lead music loop. Progress
+autosaves to localStorage on every completed job, bust, and wasted, and
+on Save & Quit from the pause menu.

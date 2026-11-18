@@ -1,192 +1,169 @@
-// combat.js — SOLMAR: fists, pistol, gang enemies and damage.
-// Enemies chase and shoot; the player punches up close or fires hitscan
-// shots. All damage flows through the small helpers in this file.
-
-const PUNCH_RANGE = 34;
-const PUNCH_DAMAGE = 20;
-const PUNCH_COOLDOWN = 0.35;
-const SHOOT_COOLDOWN = 0.22;
-const PISTOL_DAMAGE = 34;
-const PISTOL_RANGE = 420;
-const ENEMY_HP = 100;
+// SOLMAR combat — fists, pistol, gang enemies and damage.
+// Enemies chase the player, shoot back, and drop cash when beaten.
+import { PLAYER, CAR, MONEY } from './config.js';
+import { MISSIONS } from './missions.js';
+import { addWanted } from './police.js';
 
 function dist(ax, ay, bx, by) {
-  return Math.hypot(ax - bx, ay - by);
+  const dx = bx - ax;
+  const dy = by - ay;
+  const d = Math.sqrt(dx * dx + dy * dy);
+  return Number.isFinite(d) ? d : 0;
 }
 
-function sfx(S) {
-  return S.audio || S.sfx || S.sound || null;
-}
-
-function puff(S, x, y, color, n = 6) {
+function burst(S, x, y, color, n, speed, size, life) {
   if (!S.particles) return;
   for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const v = speed * (0.4 + Math.random() * 0.6);
     S.particles.push({
-      x, y, vx: (Math.random() - 0.5) * 140, vy: (Math.random() - 0.5) * 140,
-      life: 0.35 + Math.random() * 0.25, max: 0.6, color, size: 3 + Math.random() * 3,
+      x, y,
+      vx: Math.cos(a) * v,
+      vy: Math.sin(a) * v,
+      life, maxLife: life,
+      color, size: size * (0.7 + Math.random() * 0.6),
     });
   }
 }
 
-function tracer(S, x1, y1, x2, y2) {
-  if (S.tracers) S.tracers.push({ x1, y1, x2, y2, life: 0.12, max: 0.12 });
+function nearestEnemy(S, x, y, maxD) {
+  let best = null;
+  let bestD = maxD;
+  for (const e of S.enemies) {
+    if (!e || e.down) continue;
+    const d = dist(x, y, e.x, e.y);
+    if (d < bestD) { bestD = d; best = e; }
+  }
+  return best;
 }
 
-// Spawn a row of gang members at a turf position. Each has 100 HP and a
-// staggered first shot so they do not all fire on the same frame.
-export function spawnEnemies(S, x, y, count = 3) {
-  S.enemies = S.enemies || [];
-  S.defeated = 0;
-  for (let i = 0; i < count; i++) {
+export function spawnEnemies(S, x, y, count) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  const n = Math.max(0, Math.floor(count) || 0);
+  for (let i = 0; i < n; i++) {
+    const off = (i - (n - 1) / 2) * 46;
     S.enemies.push({
-      x: x + (i - (count - 1) / 2) * 56,
-      y: y + (i % 2) * 30 - 15,
-      hp: ENEMY_HP, maxHp: ENEMY_HP, down: false,
-      shootCd: 0.9 + i * 0.35, angle: 0, speed: 130,
+      x: x + off, y,
+      angle: 0, hp: 100,
+      shootCd: 0.5 + i * 0.4,
+      down: false, r: 13,
     });
   }
-  return S.enemies;
 }
 
-// Punch: short cooldown, short animation, hits the nearest living enemy
-// in range; otherwise shoves a nearby pedestrian to the ground.
 export function tryPunch(S) {
   const p = S.player;
-  if (!p || p.car || (p.punchCd || 0) > 0) return false;
-  p.punchCd = PUNCH_COOLDOWN;
-  p.punchAnim = 0.18;
-  const snd = sfx(S);
-  if (snd && snd.punch) snd.punch();
-  let best = null, bestD = PUNCH_RANGE + 14;
-  for (const e of S.enemies || []) {
-    if (e.down) continue;
-    const d = dist(p.x, p.y, e.x, e.y);
-    if (d < bestD) { best = e; bestD = d; }
+  if (!p || !p.onFoot) return;
+  if (p.punchCd > 0) return;
+  p.punchCd = PLAYER.punchCooldown;
+  const reach = PLAYER.punchRange + 12;
+  const foe = nearestEnemy(S, p.x, p.y, reach);
+  if (foe) {
+    damageEnemy(S, foe, PLAYER.punchDamage);
+    if (S.audio) S.audio.punch();
+    return;
   }
-  if (best) {
-    damageEnemy(S, best, PUNCH_DAMAGE);
-    return true;
-  }
+  let best = null;
+  let bestD = reach;
   for (const ped of S.peds || []) {
-    if (ped.down) continue;
-    if (dist(p.x, p.y, ped.x, ped.y) < PUNCH_RANGE + 16) {
-      ped.down = true;
-      ped.downT = 2.5;
-      puff(S, ped.x, ped.y, '#ffffff', 4);
-      return true;
-    }
-  }
-  return true;
-}
-
-// Shoot: pistol only, on foot, costs one round. Hitscan — a tracer to
-// max range and a hit test along the aim ray, 26 units of sideways slack.
-export function tryShoot(S, tx, ty) {
-  const p = S.player;
-  if (!p || p.car || p.weapon !== 'pistol') return false;
-  if ((p.ammo || 0) <= 0 || (p.shootCd || 0) > 0) return false;
-  p.shootCd = SHOOT_COOLDOWN;
-  p.ammo -= 1;
-  // Aim: an explicit target point wins; otherwise the mouse aim the
-  // world keeps fresh each step, falling back to the facing angle.
-  const aim = (tx === undefined || ty === undefined)
-    ? (typeof p.aim === 'number' ? p.aim : p.angle)
-    : Math.atan2(ty - p.y, tx - p.x);
-  p.angle = aim;
-  const snd = sfx(S);
-  if (snd && snd.shot) snd.shot();
-  puff(S, p.x + Math.cos(aim) * 18, p.y + Math.sin(aim) * 18, '#ffd76a', 3);
-  const ex = p.x + Math.cos(aim) * PISTOL_RANGE;
-  const ey = p.y + Math.sin(aim) * PISTOL_RANGE;
-  let best = null, bestT = PISTOL_RANGE;
-  for (const e of S.enemies || []) {
-    if (e.down) continue;
-    const dx = e.x - p.x, dy = e.y - p.y;
-    const t = dx * Math.cos(aim) + dy * Math.sin(aim);
-    if (t < 10 || t > PISTOL_RANGE) continue;
-    const side = Math.abs(-dx * Math.sin(aim) + dy * Math.cos(aim));
-    if (side < 26 && t < bestT) { best = e; bestT = t; }
+    if (!ped || ped.down) continue;
+    const d = dist(p.x, p.y, ped.x, ped.y);
+    if (d < bestD) { bestD = d; best = ped; }
   }
   if (best) {
-    tracer(S, p.x, p.y, best.x, best.y);
-    damageEnemy(S, best, PISTOL_DAMAGE);
-  } else {
-    tracer(S, p.x, p.y, ex, ey);
+    best.down = true;
+    if (S.audio) S.audio.punch();
   }
-  return true;
 }
 
-// Hurt one enemy. On death: mark it down, count the defeat, pay $40
-// and drop a cash pickup where it fell.
-export function damageEnemy(S, e, dmg) {
-  if (!e || e.down) return;
-  e.hp -= dmg;
-  puff(S, e.x, e.y, '#ff5a5a', 5);
-  if (e.hp > 0) return;
-  e.hp = 0;
-  e.down = true;
-  S.defeated = (S.defeated || 0) + 1;
-  if (S.player) S.player.cash = (S.player.cash || 0) + 40;
-  if (S.pickups) S.pickups.push({ x: e.x, y: e.y, kind: 'cash', amount: 40, t: 0 });
-  const snd = sfx(S);
-  if (snd && snd.pickup) snd.pickup();
+export function tryShoot(S, aimX, aimY) {
+  const p = S.player;
+  if (!p || !p.onFoot) return;
+  if (p.weapon !== 'pistol') return;
+  if (p.ammo <= 0 || p.shootCd > 0) return;
+  if (!Number.isFinite(aimX) || !Number.isFinite(aimY)) return;
+  p.ammo -= 1;
+  p.shootCd = PLAYER.shootCooldown;
+  const ang = Math.atan2(aimY - p.y, aimX - p.x);
+  const range = PLAYER.pistolRange;
+  const ex = p.x + Math.cos(ang) * range;
+  const ey = p.y + Math.sin(ang) * range;
+  if (S.tracers) S.tracers.push({ x1: p.x, y1: p.y, x2: ex, y2: ey, life: 0.08 });
+  burst(S, p.x + Math.cos(ang) * 20, p.y + Math.sin(ang) * 20, '#ffd76a', 3, 60, 3, 0.12);
+  let best = null;
+  let bestAlong = range;
+  for (const e of S.enemies) {
+    if (!e || e.down) continue;
+    const dx = e.x - p.x;
+    const dy = e.y - p.y;
+    const along = dx * Math.cos(ang) + dy * Math.sin(ang);
+    if (along < 0 || along > range) continue;
+    const side = Math.abs(-dx * Math.sin(ang) + dy * Math.cos(ang));
+    if (side > 26) continue;
+    if (along < bestAlong) { bestAlong = along; best = e; }
+  }
+  if (best) damageEnemy(S, best, PLAYER.pistolDamage);
+  if (S.audio) S.audio.shot();
 }
 
-// Hurt the player, with a 0.5 s invulnerability window after each hit.
-// At 0 HP the player is wasted.
+export function damageEnemy(S, enemy, dmg) {
+  if (!enemy || enemy.down) return;
+  if (!Number.isFinite(dmg)) return;
+  enemy.hp -= dmg;
+  burst(S, enemy.x, enemy.y, '#ff5544', 5, 90, 3, 0.25);
+  if (enemy.hp > 0) return;
+  enemy.down = true;
+  const m = S.mission ? MISSIONS[S.mission.index] : null;
+  const step = m && m.steps ? m.steps[S.mission.step] : null;
+  if (step && step.type === 'defeat') S.mission.defeated += 1;
+  if (S.stats) S.stats.kills += 1;
+  S.player.cash += 40;
+  if (S.pickups) S.pickups.push({ kind: 'cash', x: enemy.x, y: enemy.y, amount: 40, id: 'drop' + S.time });
+  if (S.audio) S.audio.pickup();
+}
+
 export function damagePlayer(S, dmg) {
   const p = S.player;
-  if (!p || p.hp <= 0) return;
-  if ((p.invuln || 0) > 0) return;
+  if (!p || p.invuln > 0) return;
+  if (!Number.isFinite(dmg)) return;
   p.hp -= dmg;
   p.invuln = 0.5;
-  puff(S, p.x, p.y, '#ff5a5a', 6);
-  if (p.hp <= 0) {
-    p.hp = 0;
-    S.wasted = true;
-  }
+  if (p.hp <= 0) { p.hp = 0; S.wasted = true; }
 }
 
-// Enemies chase within 380, close to 160, then shoot every ~0.9–1.6 s:
-// 9 damage on foot, 6 to the player's car. Every shot leaves a tracer.
 export function updateEnemies(S, dt) {
+  if (!Number.isFinite(dt) || dt <= 0) return;
   const p = S.player;
-  if (!p) return;
-  for (const e of S.enemies || []) {
-    if (e.down) continue;
-    const d = dist(p.x, p.y, e.x, e.y);
-    if (d > 380) { e.shootCd = Math.max(e.shootCd, 0.4); continue; }
+  for (const e of S.enemies) {
+    if (!e || e.down) continue;
+    const d = dist(e.x, e.y, p.x, p.y);
+    if (d >= 380) continue;
     e.angle = Math.atan2(p.y - e.y, p.x - e.x);
     if (d > 160) {
-      e.x += Math.cos(e.angle) * (e.speed || 130) * dt;
-      e.y += Math.sin(e.angle) * (e.speed || 130) * dt;
-      if (S.city && S.city.collide) S.city.collide(e, 12);
+      const step = 95 * dt;
+      e.x += Math.cos(e.angle) * step;
+      e.y += Math.sin(e.angle) * step;
     } else {
       e.shootCd -= dt;
       if (e.shootCd <= 0) {
         e.shootCd = 0.9 + Math.random() * 0.7;
-        tracer(S, e.x, e.y, p.x, p.y);
-        const snd = sfx(S);
-        if (snd && snd.shot) snd.shot();
+        const target = p.car || p;
+        if (S.tracers) S.tracers.push({ x1: e.x, y1: e.y, x2: target.x, y2: target.y, life: 0.08 });
         if (p.car) damageCar(S, p.car, 6);
         else damagePlayer(S, 9);
       }
     }
+    if (S.city && S.city.collide) S.city.collide(e);
   }
 }
 
-// Hurt a car. Smoke on every hit; at 0 HP it is disabled, stops dead
-// and blows out in an explosion puff.
 export function damageCar(S, car, dmg) {
-  if (!car || car.hp <= 0) return;
+  if (!car || !Number.isFinite(dmg)) return;
   car.hp -= dmg;
-  puff(S, car.x, car.y, '#888888', 4);
-  if (car.hp > 0) return;
-  car.hp = 0;
+  burst(S, car.x, car.y, '#888888', 4, 50, 4, 0.4);
+  if (car.hp > 0 || car.disabled) return;
   car.disabled = true;
   car.speed = 0;
-  puff(S, car.x, car.y, '#ff8c1a', 16);
-  puff(S, car.x, car.y, '#333333', 10);
-  const snd = sfx(S);
-  if (snd && snd.crash) snd.crash();
+  burst(S, car.x, car.y, '#ff7a1a', 14, 160, 7, 0.6);
+  if (S.audio) S.audio.crash();
 }

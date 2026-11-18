@@ -1,21 +1,17 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SOLMAR — Streets of Gold</title>
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #0c0a08; overflow: hidden; }
+  html, body { margin: 0; padding: 0; background: #0b0e1a; overflow: hidden; height: 100%; }
   #game { display: block; width: 100vw; height: 100vh; }
-  .visually-hidden {
-    position: absolute; width: 1px; height: 1px;
-    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
-  }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="SOLMAR Streets of Gold game"></canvas>
-<p id="status" class="visually-hidden" role="status" aria-live="polite"></p>
-<script type="module" src="src/main.js"></script>
+<canvas id="game" aria-label="SOLMAR — Streets of Gold"></canvas>
+<p id="status" class="visually-hidden" aria-live="polite"></p>
+<script type="module" src="./src/main.js"></script>
 </body>
 </html>

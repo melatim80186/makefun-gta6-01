@@ -1,36 +1,46 @@
-// audio.js — WebAudio synthesis for SOLMAR: every sound effect and the
-// music loop are generated live with oscillators and filtered noise.
-// No audio files ship with the game and nothing is fetched over the
-// network. All public methods are safe to call before unlock() and
-// never throw, so audio can never break the game loop.
-// Factory: returns the sound object used by the world and the menus.
-// The AudioContext is created lazily inside unlock(), which runs only
-// after a user gesture, so browsers never block it as autoplay.
+// SOLMAR audio — all sounds synthesized live with WebAudio, no files.
+// The context is created lazily on the first user gesture so the game
+// never tries to play before the browser allows sound. Every public
+// method is safe to call at any time and never throws.
+
 export function createAudio() {
   let ctx = null;
   let master = null;
+  let muted = false;
   let engineOsc = null;
   let engineGain = null;
   let engineFilter = null;
   let sirenOsc = null;
   let sirenGain = null;
+  let sirenOn = false;
   let sirenTimer = null;
-  let sirenHigh = false;
-  let muted = false;
   let musicTimer = null;
   let musicStep = 0;
-  // Create the context and the always-on oscillators. Returns true when
-  // audio is available, false when the browser has no WebAudio support.
-  function ensure() {
-    if (ctx) return true;
+  let started = false;
+
+  // 16-step bass line (Hz, 0 = rest) — a low, driving groove.
+  const bassNotes = [55, 0, 55, 65.41, 0, 55, 0, 49, 55, 0, 55, 65.41, 73.42, 0, 65.41, 49];
+  // 16-step plucked lead (Hz, 0 = rest) — sparse golden-hour melody.
+  const leadNotes = [220, 0, 261.63, 0, 329.63, 0, 261.63, 0, 220, 0, 293.66, 0, 329.63, 392, 0, 0];
+
+  function ensureCtx() {
+    if (ctx) return ctx;
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return false;
+      if (!AC) return null;
       ctx = new AC();
       master = ctx.createGain();
-      master.gain.value = muted ? 0 : 0.5;
+      master.gain.value = 0.5;
       master.connect(ctx.destination);
-      // Engine hum: sawtooth through a lowpass, silent until driving.
+    } catch (e) {
+      ctx = null;
+    }
+    return ctx;
+  }
+
+  function ensureEngine() {
+    if (!ctx || engineOsc) return;
+    try {
       engineFilter = ctx.createBiquadFilter();
       engineFilter.type = 'lowpass';
       engineFilter.frequency.value = 420;
@@ -38,12 +48,19 @@ export function createAudio() {
       engineGain.gain.value = 0;
       engineOsc = ctx.createOscillator();
       engineOsc.type = 'sawtooth';
-      engineOsc.frequency.value = 55;
+      engineOsc.frequency.value = 60;
       engineOsc.connect(engineFilter);
       engineFilter.connect(engineGain);
       engineGain.connect(master);
       engineOsc.start();
-      // Siren: plain triangle, silent until the player is wanted.
+    } catch (e) {
+      engineOsc = null;
+    }
+  }
+
+  function ensureSiren() {
+    if (!ctx || sirenOsc) return;
+    try {
       sirenGain = ctx.createGain();
       sirenGain.gain.value = 0;
       sirenOsc = ctx.createOscillator();
@@ -52,132 +69,156 @@ export function createAudio() {
       sirenOsc.connect(sirenGain);
       sirenGain.connect(master);
       sirenOsc.start();
-      return true;
-    } catch (err) {
-      ctx = null;
-      return false;
+    } catch (e) {
+      sirenOsc = null;
     }
   }
-  // One short oscillator note. `slide` is an optional target frequency
-  // the pitch glides to over the note. No-op when muted or unavailable.
-  function tone(freq, dur, wave, vol, slide) {
-    if (muted || !ctx) return;
+
+  // Short pitched blip. `slide` (Hz) bends the pitch over the note.
+  function tone(freq, duration, wave, volume, slide) {
+    if (muted || !ctx || !master) return;
     try {
+      const t = ctx.currentTime;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      const now = ctx.currentTime;
       osc.type = wave || 'sine';
-      osc.frequency.setValueAtTime(freq, now);
-      if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(20, slide), now + dur);
-      gain.gain.setValueAtTime(vol || 0.15, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      osc.frequency.setValueAtTime(freq, t);
+      if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(20, slide), t + duration);
+      gain.gain.setValueAtTime(volume || 0.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
       osc.connect(gain);
       gain.connect(master);
-      osc.start(now);
-      osc.stop(now + dur + 0.02);
-    } catch (err) { /* audio must never throw */ }
+      osc.start(t);
+      osc.stop(t + duration + 0.02);
+    } catch (e) { /* audio must never break the game */ }
   }
-  // One burst of filtered white noise. No-op when muted or unavailable.
-  function noise(dur, vol, filterFreq) {
-    if (muted || !ctx) return;
+
+  // Burst of filtered noise, for shots, crashes and hats.
+  function noise(duration, volume, filterFreq) {
+    if (muted || !ctx || !master) return;
     try {
-      const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
-      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      const t = ctx.currentTime;
+      const len = Math.max(1, Math.floor(ctx.sampleRate * duration));
+      const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
       const src = ctx.createBufferSource();
-      src.buffer = buf;
+      src.buffer = buffer;
       const filter = ctx.createBiquadFilter();
       filter.type = 'lowpass';
       filter.frequency.value = filterFreq || 1200;
       const gain = ctx.createGain();
-      const now = ctx.currentTime;
-      gain.gain.setValueAtTime(vol || 0.2, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      gain.gain.setValueAtTime(volume || 0.3, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
       src.connect(filter);
       filter.connect(gain);
       gain.connect(master);
-      src.start(now);
-      src.stop(now + dur + 0.02);
-    } catch (err) { /* audio must never throw */ }
+      src.start(t);
+    } catch (e) { /* audio must never break the game */ }
   }
-  // 16-step bass line (A minor groove) and plucked lead; 0 is a rest.
-  const BASS = [110, 0, 110, 0, 130.81, 0, 110, 0, 98, 0, 98, 0, 146.83, 0, 164.81, 0];
-  const LEAD = [440, 0, 523.25, 659.25, 0, 523.25, 440, 0, 392, 0, 440, 523.25, 587.33, 0, 659.25, 0];
-  // One music step: bass note, lead pluck, hat every 4 steps.
-  function musicTick() {
-    if (muted || !ctx) return;
-    try {
-      const i = musicStep % 16;
-      const bass = BASS[i];
-      if (bass) tone(bass, 0.22, 'triangle', 0.16);
-      const lead = LEAD[i];
-      if (lead) tone(lead, 0.16, 'square', 0.06);
-      if (i % 4 === 0) noise(0.03, 0.04, 6000);
-      musicStep++;
-    } catch (err) { /* audio must never throw */ }
-  }
+
   function startMusic() {
     if (musicTimer || !ctx) return;
-    try { musicTimer = setInterval(musicTick, 190); } catch (err) { musicTimer = null; }
+    musicTimer = setInterval(() => {
+      if (muted || !ctx) return;
+      try {
+        const bass = bassNotes[musicStep % 16];
+        const lead = leadNotes[musicStep % 16];
+        if (bass) tone(bass, 0.22, 'triangle', 0.16);
+        if (lead) tone(lead, 0.16, 'square', 0.05);
+        if (musicStep % 4 === 0) noise(0.04, 0.05, 6000);
+      } catch (e) { /* keep the loop alive */ }
+      musicStep = (musicStep + 1) % 16;
+    }, 190);
   }
-  // Create/resume the context and start the music loop. Safe to call twice.
+
   function unlock() {
     try {
-      if (!ensure()) return;
-      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-      startMusic();
-    } catch (err) { /* audio must never throw */ }
-  }
-  function setMuted(m) {
-    muted = !!m;
-    try { if (master) master.gain.value = muted ? 0 : 0.5; } catch (err) { /* ignore */ }
-  }
-  function isMuted() { return muted; }
-  // Engine hum follows the speed ratio (0..1). Silent when not driving.
-  function setEngine(ratio, driving) {
-    if (!ctx || !engineOsc || !engineGain) return;
-    try {
-      const r = Math.max(0, Math.min(1, ratio || 0));
-      const on = driving === undefined ? r > 0.02 : !!driving && r > 0.02;
-      const now = ctx.currentTime;
-      engineGain.gain.setTargetAtTime(on ? 0.05 + 0.09 * r : 0, now, 0.08);
-      engineOsc.frequency.setTargetAtTime(50 + 140 * r, now, 0.08);
-    } catch (err) { /* audio must never throw */ }
-  }
-  // Two-tone police wail while wanted; silent when clean.
-  function setSiren(wanted) {
-    if (!ctx || !sirenOsc || !sirenGain) return;
-    try {
-      const on = !!wanted && wanted !== 0;
-      const now = ctx.currentTime;
-      if (on && !sirenTimer) {
-        sirenGain.gain.setTargetAtTime(0.05, now, 0.1);
-        sirenHigh = false;
-        sirenTimer = setInterval(() => {
-          try {
-            sirenHigh = !sirenHigh;
-            sirenOsc.frequency.setValueAtTime(sirenHigh ? 880 : 660, ctx.currentTime);
-          } catch (err) { /* ignore */ }
-        }, 450);
-      } else if (!on && sirenTimer) {
-        clearInterval(sirenTimer);
-        sirenTimer = null;
-        sirenGain.gain.setTargetAtTime(0, now, 0.1);
+      const c = ensureCtx();
+      if (!c) return;
+      if (c.resume) c.resume();
+      ensureEngine();
+      ensureSiren();
+      if (!started) {
+        started = true;
+        startMusic();
       }
-    } catch (err) { /* audio must never throw */ }
+    } catch (e) { /* never throw */ }
   }
-  // Staggered notes for multi-note stingers; safe before unlock.
-  function after(ms, fn) { try { setTimeout(fn, ms); } catch (err) { /* ignore */ } }
-  function shot() { noise(0.12, 0.35, 1800); tone(160, 0.08, 'square', 0.15, 60); }
-  function punch() { tone(90, 0.12, 'sine', 0.4, 50); noise(0.06, 0.2, 400); }
-  function crash() { noise(0.35, 0.4, 900); tone(70, 0.3, 'sawtooth', 0.25, 40); }
-  function pickup() { tone(660, 0.09, 'sine', 0.2); after(90, () => tone(880, 0.12, 'sine', 0.2)); }
-  function cash() { tone(880, 0.09, 'sine', 0.2); after(70, () => tone(1174.66, 0.09, 'sine', 0.2)); after(140, () => tone(1567.98, 0.14, 'sine', 0.2)); }
-  function horn() { tone(370, 0.25, 'square', 0.16); tone(466.16, 0.25, 'square', 0.16); }
-  function missionDone() { tone(523.25, 0.12, 'square', 0.16); after(110, () => tone(659.25, 0.12, 'square', 0.16)); after(220, () => tone(783.99, 0.12, 'square', 0.16)); after(330, () => tone(1046.5, 0.22, 'square', 0.18)); }
-  function busted() { tone(392, 0.16, 'sawtooth', 0.18); after(140, () => tone(329.63, 0.16, 'sawtooth', 0.18)); after(280, () => tone(261.63, 0.3, 'sawtooth', 0.18)); }
-  function click() { tone(900, 0.05, 'square', 0.12); }
-  return { unlock, setMuted, isMuted, setEngine, setSiren, shot, punch, crash, pickup, cash, horn, missionDone, busted, click };
+
+  function setMuted(value) {
+    muted = !!value;
+    try {
+      if (master) master.gain.value = muted ? 0 : 0.5;
+    } catch (e) { /* never throw */ }
+  }
+
+  function isMuted() {
+    return muted;
+  }
+
+  // ratio 0..1 = speed fraction; driving false silences the hum.
+  function setEngine(ratio, driving) {
+    try {
+      if (!ctx) return;
+      ensureEngine();
+      if (!engineOsc || !engineGain) return;
+      const r = Math.max(0, Math.min(1, ratio || 0));
+      const t = ctx.currentTime;
+      const target = driving && !muted ? 0.03 + r * 0.09 : 0;
+      engineGain.gain.setTargetAtTime(target, t, 0.08);
+      engineOsc.frequency.setTargetAtTime(55 + r * 130, t, 0.08);
+    } catch (e) { /* never throw */ }
+  }
+
+  // Two-tone wail while the player is wanted; off otherwise.
+  function setSiren(on) {
+    try {
+      if (!ctx) return;
+      ensureSiren();
+      if (!sirenOsc || !sirenGain) return;
+      if (on && !sirenOn) {
+        sirenOn = true;
+        let high = false;
+        sirenTimer = setInterval(() => {
+          if (muted || !sirenOn || !sirenOsc) return;
+          high = !high;
+          sirenOsc.frequency.setTargetAtTime(high ? 950 : 700, ctx.currentTime, 0.05);
+        }, 420);
+        sirenGain.gain.setTargetAtTime(muted ? 0 : 0.05, ctx.currentTime, 0.1);
+      } else if (!on && sirenOn) {
+        sirenOn = false;
+        if (sirenTimer) { clearInterval(sirenTimer); sirenTimer = null; }
+        sirenGain.gain.setTargetAtTime(0, ctx.currentTime, 0.1);
+      }
+    } catch (e) { /* never throw */ }
+  }
+
+  function shot() { noise(0.14, 0.5, 2600); tone(180, 0.08, 'square', 0.16, 60); }
+  function punch() { tone(110, 0.12, 'sine', 0.4, 45); noise(0.06, 0.2, 500); }
+  function crash() { noise(0.35, 0.5, 800); tone(90, 0.3, 'sawtooth', 0.2, 40); }
+  function pickup() { tone(660, 0.1, 'sine', 0.22); setTimeout(() => tone(880, 0.14, 'sine', 0.22), 90); }
+  function cash() {
+    tone(880, 0.1, 'sine', 0.22);
+    setTimeout(() => tone(1108.7, 0.1, 'sine', 0.22), 90);
+    setTimeout(() => tone(1318.5, 0.18, 'sine', 0.22), 180);
+  }
+  function horn() {
+    tone(370, 0.18, 'square', 0.12);
+    setTimeout(() => tone(466.16, 0.18, 'square', 0.12), 170);
+  }
+  function missionDone() {
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    notes.forEach((n, i) => setTimeout(() => tone(n, 0.22, 'triangle', 0.22), i * 130));
+  }
+  function busted() {
+    const notes = [392, 311.13, 233.08];
+    notes.forEach((n, i) => setTimeout(() => tone(n, 0.3, 'sawtooth', 0.16), i * 220));
+  }
+  function click() { tone(1200, 0.04, 'square', 0.1); }
+
+  return {
+    unlock, setMuted, isMuted, setEngine, setSiren,
+    shot, punch, crash, pickup, cash, horn, missionDone, busted, click,
+  };
 }
-export default createAudio;

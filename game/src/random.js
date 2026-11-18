@@ -1,14 +1,13 @@
-// Seeded random numbers for SOLMAR: same seed, same city every time.
-// mulberry32 is a tiny, fast generator that is good enough for placement
-// and traffic variation, and it keeps screenshots reproducible via ?seed=.
+// Seeded random numbers for SOLMAR — same seed, same city every time.
+// Mulberry32: small, fast, and deterministic across runs and browsers.
 
 export function createRng(seed) {
-  // Force the seed into an unsigned 32-bit integer so any input works.
+  // Normalise the seed to an unsigned 32-bit state; 0 would lock the
+  // generator, so fall back to a fixed non-zero value instead.
   let state = (seed >>> 0) || 0x9e3779b9;
 
   function next() {
-    // mulberry32 step: scramble the state, then fold it into [0, 1).
-    state = (state + 0x6d2b79f5) >>> 0;
+    state = (state + 0x6d2b79f5) | 0;
     let t = state;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
@@ -20,13 +19,13 @@ export function createRng(seed) {
   }
 
   function int(min, max) {
-    // Inclusive on both ends, so int(1, 3) can return 1, 2 or 3.
+    // Inclusive on both ends, so int(1, 6) can roll a 6.
     return Math.floor(range(min, max + 1));
   }
 
-  function pick(list) {
-    if (!list || list.length === 0) return undefined;
-    return list[Math.floor(next() * list.length)];
+  function pick(arr) {
+    if (!arr || arr.length === 0) return undefined;
+    return arr[Math.floor(next() * arr.length)];
   }
 
   return { next, range, int, pick };
